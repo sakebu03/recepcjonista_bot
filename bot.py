@@ -44,10 +44,10 @@ SEX_EMOJIS = {
     "⚧️": "other",
 }
 
-SEX_ROLE_NAMES = {
-    "male": "Mężczyzna",
-    "female": "Kobieta",
-    "other": "Inna płeć",
+SEX_EMOJIS = {
+    "1️⃣": "male",     # mężczyzna
+    "2️⃣": "female",   # kobieta
+    "3️⃣": "other",    # inna
 }
 
 SEX_ROLE_NAME_SET = set(SEX_ROLE_NAMES.values())
