@@ -1,3 +1,4 @@
+import os
 import discord
 from discord.ext import commands
 from discord.utils import get
@@ -5,7 +6,7 @@ import asyncio
 
 # ===================== KONFIGURACJA POD CIEBIE =====================
 
-TOKEN = "TUTAJ_WKLEJ_SWÓJ_TOKEN_BOTA"
+TOKEN = os.getenv("DISCORD_BOT_TOKEN")
 
 # Nazwa roli startowej (tworzy się sama, jeśli jej nie ma)
 START_ROLE_NAME = "Nowy"
