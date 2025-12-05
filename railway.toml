@@ -1,0 +1,8 @@
+[deploy]
+runtime = "python"
+
+[build]
+builder = "nixpacks"
+
+[variables]
+PYTHON_VERSION="3.12"
