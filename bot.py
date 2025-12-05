@@ -1,155 +1,144 @@
-import os
-import asyncio
 import discord
 from discord.ext import commands
+from discord.utils import get
+import asyncio
 
-# === KONFIGURACJA ===
+# ===================== KONFIGURACJA POD CIEBIE =====================
 
-# TOKEN pobieramy ze zmiennej środowiskowej (Railway → Variables → TOKEN)
-TOKEN = os.getenv("TOKEN")
+TOKEN = "TUTAJ_WKLEJ_SWÓJ_TOKEN_BOTA"
 
-if TOKEN is None:
-    raise RuntimeError("Brak zmiennej środowiskowej TOKEN. Ustaw ją w Railway / lokalnie.")
+# Nazwa roli startowej (tworzy się sama, jeśli jej nie ma)
+START_ROLE_NAME = "Nowy"
 
-WELCOME_CATEGORY_NAME = "Rejestracja"   # kategoria na kanały rejestracyjne
-ADMIN_ROLE_NAME = "Administracja"       # rola administracji, która ma widzieć wszystkie kanały rejestracyjne
+# Nazwa kategorii, w której bot będzie tworzył kanały ankiet
+WELCOME_CATEGORY_NAME = "Powitania"
+
+# ----- WIEK -----
+# Emoji -> kod wewnętrzny
+AGE_EMOJIS = {
+    "1️⃣": "under_13",
+    "2️⃣": "13_15",
+    "3️⃣": "16_17",
+    "4️⃣": "18_20",
+    "5️⃣": "21_24",
+    "6️⃣": "25_plus",
+}
+
+# Kod wewnętrzny -> nazwa roli (takie dokładnie nazwy ról stworzy bot)
+AGE_ROLE_NAMES = {
+    "under_13": "Wiek < 13",
+    "13_15": "Wiek 13–15",
+    "16_17": "Wiek 16–17",
+    "18_20": "Wiek 18–20",
+    "21_24": "Wiek 21–24",
+    "25_plus": "Wiek 25+",
+}
+
+AGE_ROLE_NAME_SET = set(AGE_ROLE_NAMES.values())
+
+# ----- PŁEĆ -----
+SEX_EMOJIS = {
+    "♂️": "male",
+    "♀️": "female",
+    "⚧️": "other",
+}
+
+SEX_ROLE_NAMES = {
+    "male": "Mężczyzna",
+    "female": "Kobieta",
+    "other": "Inna płeć",
+}
+
+SEX_ROLE_NAME_SET = set(SEX_ROLE_NAMES.values())
+
+# ----- WOJEWÓDZTWA -----
+# Emoji -> nazwa województwa (równocześnie nazwa roli)
+VOIVODESHIP_EMOJIS = {
+    "1️⃣":  "dolnośląskie",
+    "2️⃣":  "kujawsko-pomorskie",
+    "3️⃣":  "lubelskie",
+    "4️⃣":  "lubuskie",
+    "5️⃣":  "łódzkie",
+    "6️⃣":  "małopolskie",
+    "7️⃣":  "mazowieckie",
+    "8️⃣":  "opolskie",
+    "9️⃣":  "podkarpackie",
+    "🔟":  "podlaskie",
+    "🅰️": "pomorskie",
+    "🅱️": "śląskie",
+    "🆎": "świętokrzyskie",
+    "🆑": "warmińsko-mazurskie",
+    "🅾️": "wielkopolskie",
+    "🆘": "zachodniopomorskie",
+}
+
+VOIVODESHIP_ROLE_NAME_SET = set(VOIVODESHIP_EMOJIS.values())
+
+# ===================== USTAWIENIA BOTA =====================
 
 intents = discord.Intents.default()
-intents.members = True  # wymagane dla on_member_join
+intents.members = True
+intents.message_content = True
+intents.guilds = True
+intents.reactions = True
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-# Flaga, żeby nie odpalać migracji wiele razy
-migration_done = False
-
-# Lista województw (wszystkie)
-VOIVODESHIPS = [
-    "Dolnośląskie",
-    "Kujawsko-Pomorskie",
-    "Lubelskie",
-    "Lubuskie",
-    "Łódzkie",
-    "Małopolskie",
-    "Mazowieckie",
-    "Opolskie",
-    "Podkarpackie",
-    "Podlaskie",
-    "Pomorskie",
-    "Śląskie",
-    "Świętokrzyskie",
-    "Warmińsko-Mazurskie",
-    "Wielkopolskie",
-    "Zachodniopomorskie",
-]
-
-AGE_ROLES = ["13-15", "16-18", "19-24", "25+"]
-
-
-# === EVENT: BOT GOTOWY ===
 
 @bot.event
 async def on_ready():
-    global migration_done
-    print(f"Zalogowano jako {bot.user} (ID: {bot.user.id})")
-    print("Bot jest gotowy.")
-
-    # żeby nie odpalać tego przy każdym reconnect
-    if migration_done:
-        return
-    migration_done = True
-
-    # AUTOMATYCZNE wymuszenie rejestracji na wszystkich obecnych użytkownikach
-    print("[MIGRACJA] Start automatycznej rejestracji obecnych użytkowników...")
-
-    for guild in bot.guilds:
-        admin_role = discord.utils.get(guild.roles, name=ADMIN_ROLE_NAME)
-
-        for member in guild.members:
-            # pomijamy boty
-            if member.bot:
-                continue
-
-            # pomijamy administrację
-            if admin_role and admin_role in member.roles:
-                continue
-
-            # pomijamy tych, którzy wyglądają na zarejestrowanych
-            if is_already_registered(member):
-                continue
-
-            print(f"[MIGRACJA] Wymuszam rejestrację na {member} w {guild.name}")
-            await start_registration_for_member(member)
-
-            # pauza, żeby nie wpaść w rate limit na większych serwerach
-            await asyncio.sleep(1)
-
-    print("[MIGRACJA] Zakończono automatyczną rejestrację obecnych użytkowników.")
+    print(f"✅ Zalogowano jako {bot.user} (ID: {bot.user.id})")
 
 
-# === FUNKCJE POMOCNICZE ===
+# ===================== POMOCNICZE FUNKCJE =====================
 
-async def get_or_create_role(guild: discord.Guild, role_name: str):
-    """Znajduje lub tworzy rolę o podanej nazwie."""
-    role = discord.utils.get(guild.roles, name=role_name)
+async def get_or_create_role(guild: discord.Guild, name: str) -> discord.Role:
+    """Znajdź rolę po nazwie, a jeśli nie istnieje – utwórz ją."""
+    role = get(guild.roles, name=name)
     if role is not None:
         return role
 
-    try:
-        role = await guild.create_role(
-            name=role_name,
-            reason="Automatyczne tworzenie ról przez bota rejestracyjnego"
-        )
-        print(f"[INFO] Utworzono rolę: {role_name} na serwerze {guild.name}")
-        return role
-    except discord.Forbidden:
-        print(f"[BŁĄD] Brak uprawnień do tworzenia roli: {role_name}")
-    except Exception as e:
-        print(f"[BŁĄD] Nie udało się utworzyć roli {role_name}: {e}")
-    return None
+    # Możesz tu dodać kolory dla konkretnych ról jeśli chcesz
+    print(f"ℹ️ Tworzę nową rolę: {name} na serwerze {guild.name}")
+    role = await guild.create_role(
+        name=name,
+        reason="Automatycznie utworzone przez bota (brakowało roli)",
+    )
+    return role
 
 
-async def get_or_create_welcome_category(guild: discord.Guild):
-    """Znajduje lub tworzy kategorię na kanały rejestracyjne."""
-    category = discord.utils.get(guild.categories, name=WELCOME_CATEGORY_NAME)
+async def get_or_create_category(guild: discord.Guild, name: str) -> discord.CategoryChannel:
+    """Znajdź kategorię po nazwie, a jeśli nie istnieje – utwórz ją."""
+    category = get(guild.categories, name=name)
     if category is not None:
         return category
 
-    try:
-        category = await guild.create_category(
-            name=WELCOME_CATEGORY_NAME,
-            reason="Kategoria na kanały rejestracyjne bota"
-        )
-        print(f"[INFO] Utworzono kategorię: {WELCOME_CATEGORY_NAME} na serwerze {guild.name}")
-        return category
-    except discord.Forbidden:
-        print("[BŁĄD] Bot nie ma uprawnień do tworzenia kategorii.")
-    except Exception as e:
-        print(f"[BŁĄD] Nie udało się utworzyć kategorii {WELCOME_CATEGORY_NAME}: {e}")
-    return None
+    print(f"ℹ️ Tworzę kategorię: {name} na serwerze {guild.name}")
+    category = await guild.create_category(name=name, reason="Kategoria na kanały ankiet bota")
+    return category
 
 
-async def create_welcome_channel(guild: discord.Guild, member: discord.Member):
+# ===================== GŁÓWNA FUNKCJA ANKIETY =====================
+
+async def przeprowadz_ankiete(member: discord.Member, uzyj_roli_startowej: bool):
     """
-    Tworzy prywatny kanał tekstowy dla użytkownika.
-    Widziany tylko przez:
-      - tego użytkownika
-      - bota
-      - administrację (rola ADMIN_ROLE_NAME, jeśli istnieje)
-    Wszystkie takie kanały lądują w kategorii WELCOME_CATEGORY_NAME.
+    Tworzy prywatny kanał, zadaje 3 pytania na reakcjach (wiek, województwo, płeć),
+    ustawia role i na końcu usuwa kanał.
+
+    uzyj_roli_startowej = True  -> tryb dla nowych użytkowników (on_member_join)
+    uzyj_roli_startowej = False -> tryb komendy !ankieta (bez blokady serwera)
     """
-    # jeśli kanał już istnieje, nie tworzymy drugiego
-    existing = discord.utils.get(guild.text_channels, name=f"rejestracja-{member.id}")
-    if existing:
-        return existing
+    guild = member.guild
 
-    channel_name = f"rejestracja-{member.id}"
+    # 0. Upewniamy się, że podstawowe rzeczy istnieją (rola startowa, kategoria)
+    start_role = await get_or_create_role(guild, START_ROLE_NAME)
+    category = await get_or_create_category(guild, WELCOME_CATEGORY_NAME)
 
-    category = await get_or_create_welcome_category(guild)
-    if category is None:
-        return None
+    # 1. Nadaj rolę startową tylko dla nowych userów
+    if uzyj_roli_startowej and start_role not in member.roles:
+        await member.add_roles(start_role, reason="Nowy użytkownik - rola startowa")
 
-    admin_role = discord.utils.get(guild.roles, name=ADMIN_ROLE_NAME)
-
+    # 2. Utwórz prywatny kanał
     overwrites = {
         guild.default_role: discord.PermissionOverwrite(view_channel=False),
         member: discord.PermissionOverwrite(
@@ -160,282 +149,196 @@ async def create_welcome_channel(guild: discord.Guild, member: discord.Member):
         guild.me: discord.PermissionOverwrite(
             view_channel=True,
             send_messages=True,
-            read_message_history=True,
             manage_channels=True,
-            manage_messages=True
+            read_message_history=True
         ),
     }
 
-    # administracja ma widzieć wszystkie kanały rejestracyjne
-    if admin_role:
-        overwrites[admin_role] = discord.PermissionOverwrite(
-            view_channel=True,
-            read_message_history=True,
-            send_messages=True
-        )
+    channel_name = f"ankieta-{member.name}-{member.id}".lower().replace(" ", "-")
+    if len(channel_name) > 90:
+        channel_name = channel_name[:90]
 
-    try:
-        channel = await category.create_text_channel(
-            name=channel_name,
-            overwrites=overwrites,
-            reason=f"Prywatny kanał rejestracyjny dla {member}"
-        )
-
-        print(f"[INFO] Utworzono kanał {channel.name} dla {member}")
-        return channel
-    except discord.Forbidden:
-        print("[BŁĄD] Bot nie ma uprawnień do tworzenia kanałów.")
-    except Exception as e:
-        print(f"[BŁĄD] Nie udało się stworzyć kanału powitalnego: {e}")
-    return None
-
-
-async def hide_other_channels_for_member(
-    guild: discord.Guild,
-    member: discord.Member,
-    allowed_channel: discord.abc.GuildChannel
-):
-    """Ukrywa wszystkie inne kanały przed użytkownikiem, zostawiając widoczny tylko allowed_channel."""
-    for channel in guild.channels:
-        if channel.id == allowed_channel.id:
-            continue
-        try:
-            await channel.set_permissions(member, view_channel=False)
-        except discord.Forbidden:
-            print(f"[BŁĄD] Brak uprawnień do zmiany permów na kanale {channel}")
-        except Exception as e:
-            print(f"[BŁĄD] Nie udało się ukryć kanału {channel} dla {member}: {e}")
-
-
-async def restore_channels_for_member(guild: discord.Guild, member: discord.Member):
-    """Przywraca normalny widok kanałów – usuwa indywidualne nadpisania permów dla użytkownika."""
-    for channel in guild.channels:
-        try:
-            await channel.set_permissions(member, overwrite=None)
-        except discord.Forbidden:
-            print(f"[BŁĄD] Brak uprawnień do przywrócenia permów na {channel}")
-        except Exception as e:
-            print(f"[BŁĄD] Nie udało się przywrócić permów na {channel} dla {member}: {e}")
-
-
-def is_correct_user(interaction: discord.Interaction, member: discord.Member) -> bool:
-    """Sprawdza, czy klikający interakcję to ta sama osoba, dla której trwa rejestracja."""
-    return interaction.user.id == member.id
-
-
-def is_already_registered(member: discord.Member) -> bool:
-    """
-    Uznajemy, że ktoś jest 'zarejestrowany', jeśli ma
-    jedną z ról wiekowych lub jedną z ról-województw.
-    """
-    role_names = {r.name for r in member.roles}
-    if any(r in role_names for r in AGE_ROLES):
-        return True
-    if any(v in role_names for v in VOIVODESHIPS):
-        return True
-    return False
-
-
-async def start_registration_for_member(member: discord.Member):
-    """Wspólny flow rejestracji – używany przy wejściu i przy migracji istniejących."""
-    guild = member.guild
-    channel = await create_welcome_channel(guild, member)
-    if not channel:
-        return
-
-    await hide_other_channels_for_member(guild, member, channel)
-
-    await channel.send(
-        f"Hej {member.mention}! 👋\n\n"
-        f"Witaj na serwerze! Zanim odblokuję Ci cały serwer, odpowiedz proszę na kilka pytań.\n\n"
-        f"**1/3** Jaka jest Twoja płeć?",
-        view=GenderView(member)
+    welcome_channel = await guild.create_text_channel(
+        name=channel_name,
+        category=category,
+        overwrites=overwrites,
+        reason=f"Kanał ankiety dla {member}",
     )
 
-
-# === UI: PRZYCISKI + SELECTY ===
-
-class GenderView(discord.ui.View):
-    """Widok z przyciskami do wyboru płci."""
-
-    def __init__(self, member: discord.Member):
-        super().__init__(timeout=300)
-        self.member = member
-
-    async def handle_click(self, interaction: discord.Interaction, role_name: str):
-        if not is_correct_user(interaction, self.member):
-            await interaction.response.send_message(
-                "To nie jest Twoja rejestracja 😉",
-                ephemeral=True
+    try:
+        # 3. Powitanie
+        if uzyj_roli_startowej:
+            intro = (
+                f"Hej {member.mention}! 👋\n"
+                f"Witamy na serwerze! Mam krótką ankietę, żeby nadać Ci odpowiednie role."
             )
-            return
-
-        role = await get_or_create_role(interaction.guild, role_name)
-        if role:
-            await self.member.add_roles(role, reason="Płeć podana przy rejestracji")
-
-        # Pytanie o wiek
-        await interaction.response.edit_message(
-            content="✅ Zapisano płeć.\n\n**2/3** Ile masz lat?",
-            view=AgeView(self.member)
-        )
-
-    @discord.ui.button(label="Mężczyzna", style=discord.ButtonStyle.primary)
-    async def male_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self.handle_click(interaction, "Mężczyzna")
-
-    @discord.ui.button(label="Kobieta", style=discord.ButtonStyle.primary)
-    async def female_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self.handle_click(interaction, "Kobieta")
-
-    @discord.ui.button(label="Inna", style=discord.ButtonStyle.secondary)
-    async def other_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self.handle_click(interaction, "Inna")
-
-
-class AgeView(discord.ui.View):
-    """Widok z przyciskami do wyboru przedziału wiekowego + blokada < 13."""
-
-    def __init__(self, member: discord.Member):
-        super().__init__(timeout=300)
-        self.member = member
-
-    async def _age_ok(self, interaction: discord.Interaction, role_name: str):
-        """Obsługa poprawnego wieku (13+)."""
-        if not is_correct_user(interaction, self.member):
-            await interaction.response.send_message(
-                "To nie jest Twoja rejestracja 😉",
-                ephemeral=True
+        else:
+            intro = (
+                f"Hej {member.mention}! 👋\n"
+                f"Tutaj możesz zmienić swoje główne role (wiek, województwo, płeć)."
             )
-            return
+        await welcome_channel.send(intro)
 
-        role = await get_or_create_role(interaction.guild, role_name)
-        if role:
-            await self.member.add_roles(role, reason="Wiek podany przy rejestracji")
-
-        # Kolejne pytanie – województwo
-        await interaction.response.edit_message(
-            content="✅ Zapisano wiek.\n\n**3/3** Z jakiego województwa jesteś?",
-            view=VoivodeshipView(self.member)
+        # ========== PYTANIE 1: WIEK (REACTIONS) ==========
+        age_text = (
+            "**Pytanie 1:** Ile masz lat?\n"
+            "Reaguj:\n"
+            "1️⃣  -  mniej niż 13 lat\n"
+            "2️⃣  -  13–15 lat\n"
+            "3️⃣  -  16–17 lat\n"
+            "4️⃣  -  18–20 lat\n"
+            "5️⃣  -  21–24 lata\n"
+            "6️⃣  -  25+ lat\n"
         )
+        msg_age = await welcome_channel.send(age_text)
+        for emoji in AGE_EMOJIS.keys():
+            await msg_age.add_reaction(emoji)
 
-    @discord.ui.button(label="Mam mniej niż 13 lat", style=discord.ButtonStyle.danger)
-    async def under_13(self, interaction: discord.Interaction, button: discord.ui.Button):
-        """
-        Osoba ma mniej niż 13 lat – blokujemy dostęp do serwera.
-        Kanały pozostają zablokowane, kanał rejestracyjny zostaje (np. dla kontaktu z adminem).
-        """
-        if not is_correct_user(interaction, self.member):
-            await interaction.response.send_message(
-                "To nie jest Twoja rejestracja 😉",
-                ephemeral=True
+        def check_age(reaction, user):
+            return (
+                user == member
+                and reaction.message.id == msg_age.id
+                and str(reaction.emoji) in AGE_EMOJIS
             )
-            return
 
-        await interaction.response.edit_message(
-            content=(
-                "❌ Niestety, aby korzystać z tego serwera musisz mieć **co najmniej 13 lat**.\n\n"
-                "Twoje konto nie otrzyma dostępu do pozostałych kanałów. "
-                "Jeśli to pomyłka, skontaktuj się z administracją."
-            ),
-            view=None
-        )
+        reaction_age, _ = await bot.wait_for("reaction_add", timeout=300, check=check_age)
+        age_choice_key = AGE_EMOJIS[str(reaction_age.emoji)]  # np. "16_17"
 
-    @discord.ui.button(label="13-15", style=discord.ButtonStyle.success)
-    async def age_13_15(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self._age_ok(interaction, "13-15")
-
-    @discord.ui.button(label="16-18", style=discord.ButtonStyle.success)
-    async def age_16_18(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self._age_ok(interaction, "16-18")
-
-    @discord.ui.button(label="19-24", style=discord.ButtonStyle.primary)
-    async def age_19_24(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self._age_ok(interaction, "19-24")
-
-    @discord.ui.button(label="25+", style=discord.ButtonStyle.secondary)
-    async def age_25_plus(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self._age_ok(interaction, "25+")
-
-
-class VoivodeshipSelect(discord.ui.Select):
-    """Select (lista rozwijana) z województwami."""
-
-    def __init__(self, member: discord.Member):
-        self.member = member
-        options = [
-            discord.SelectOption(label=name, value=name)
-            for name in VOIVODESHIPS
+        # ========== PYTANIE 2: WOJEWÓDZTWO (REACTIONS) ==========
+        woj_text_lines = [
+            "**Pytanie 2:** Z jakiego województwa jesteś?\n",
+            "Wybierz reakcję:",
         ]
-        super().__init__(
-            placeholder="Wybierz swoje województwo...",
-            min_values=1,
-            max_values=1,
-            options=options
-        )
+        for emoji, name in VOIVODESHIP_EMOJIS.items():
+            woj_text_lines.append(f"{emoji}  -  {name}")
 
-    async def callback(self, interaction: discord.Interaction):
-        if not is_correct_user(interaction, self.member):
-            await interaction.response.send_message(
-                "To nie jest Twoja rejestracja 😉",
-                ephemeral=True
+        msg_woj = await welcome_channel.send("\n".join(woj_text_lines))
+        for emoji in VOIVODESHIP_EMOJIS.keys():
+            await msg_woj.add_reaction(emoji)
+
+        def check_woj(reaction, user):
+            return (
+                user == member
+                and reaction.message.id == msg_woj.id
+                and str(reaction.emoji) in VOIVODESHIP_EMOJIS
             )
-            return
 
-        voivodeship_name = self.values[0]
-        role = await get_or_create_role(interaction.guild, voivodeship_name)
-        if role:
-            await self.member.add_roles(role, reason="Województwo podane przy rejestracji")
+        reaction_woj, _ = await bot.wait_for("reaction_add", timeout=300, check=check_woj)
+        woj_choice_name = VOIVODESHIP_EMOJIS[str(reaction_woj.emoji)]  # np. "mazowieckie"
 
-        guild = interaction.guild
-        channel = interaction.channel
-
-        # Odblokowujemy kanały (usuwamy indywidualne permisy)
-        await restore_channels_for_member(guild, self.member)
-
-        await interaction.response.edit_message(
-            content=(
-                f"✅ Zapisano województwo: **{voivodeship_name}**.\n\n"
-                f"Twoja rejestracja została zakończona, {self.member.mention}! 🎉\n"
-                f"Za chwilę ten kanał zostanie usunięty."
-            ),
-            view=None
+        # ========== PYTANIE 3: PŁEĆ (REACTIONS) ==========
+        sex_text = (
+            "**Pytanie 3:** Jaką masz płeć?\n"
+            "Reaguj:\n"
+            "♂️  -  mężczyzna\n"
+            "♀️  -  kobieta\n"
+            "⚧️  -  inna\n"
         )
+        msg_sex = await welcome_channel.send(sex_text)
+        for emoji in SEX_EMOJIS.keys():
+            await msg_sex.add_reaction(emoji)
 
-        # Usuwamy kanał rejestracyjny
+        def check_sex(reaction, user):
+            return (
+                user == member
+                and reaction.message.id == msg_sex.id
+                and str(reaction.emoji) in SEX_EMOJIS
+            )
+
+        reaction_sex, _ = await bot.wait_for("reaction_add", timeout=300, check=check_sex)
+        sex_choice_key = SEX_EMOJIS[str(reaction_sex.emoji)]  # "male"/"female"/"other"
+
+        # ================== NADAWANIE RÓL ==================
+
+        # ---- WIEK ----
+        # usuwamy wszystkie stare role wiekowe
+        age_roles_to_remove = [r for r in member.roles if r.name in AGE_ROLE_NAME_SET]
+        if age_roles_to_remove:
+            await member.remove_roles(*age_roles_to_remove, reason="Czyszczenie starych ról wiekowych")
+
+        age_role_name = AGE_ROLE_NAMES.get(age_choice_key)
+        if age_role_name:
+            new_age_role = await get_or_create_role(guild, age_role_name)
+            await member.add_roles(new_age_role, reason="Ustawienie roli wiekowej")
+
+        # ---- WOJEWÓDZTWO ----
+        voiv_roles_to_remove = [r for r in member.roles if r.name in VOIVODESHIP_ROLE_NAME_SET]
+        if voiv_roles_to_remove:
+            await member.remove_roles(*voiv_roles_to_remove, reason="Czyszczenie starego województwa")
+
+        if woj_choice_name in VOIVODESHIP_ROLE_NAME_SET:
+            new_voiv_role = await get_or_create_role(guild, woj_choice_name)
+            await member.add_roles(new_voiv_role, reason="Ustawienie roli województwa")
+
+        # ---- PŁEĆ ----
+        sex_roles_to_remove = [r for r in member.roles if r.name in SEX_ROLE_NAME_SET]
+        if sex_roles_to_remove:
+            await member.remove_roles(*sex_roles_to_remove, reason="Czyszczenie starych ról płci")
+
+        sex_role_name = SEX_ROLE_NAMES.get(sex_choice_key)
+        if sex_role_name:
+            new_sex_role = await get_or_create_role(guild, sex_role_name)
+            await member.add_roles(new_sex_role, reason="Ustawienie roli płci")
+
+        # 6. Zabierz rolę startową (tylko dla nowych)
+        if uzyj_roli_startowej and start_role in member.roles:
+            await member.remove_roles(start_role, reason="Zakończona weryfikacja")
+
+        # 7. Info końcowe
+        if uzyj_roli_startowej:
+            msg = (
+                "✅ Dzięki za odpowiedzi! Role zostały nadane, a reszta serwera powinna być już widoczna.\n"
+                "Ten kanał za chwilę zniknie. Miłego pobytu! 🎉"
+            )
+        else:
+            msg = (
+                "✅ Zaktualizowałem Twoje role (wiek, województwo, płeć).\n"
+                "Ten kanał zaraz usunę. Jeśli chcesz, możesz kiedyś znowu użyć komendy `!ankieta`."
+            )
+
+        await welcome_channel.send(msg)
+        await asyncio.sleep(5)
+
+    except asyncio.TimeoutError:
+        await welcome_channel.send(
+            "⏰ Minął czas na odpowiedź (5 minut). Spróbuj ponownie później albo poproś administrację."
+        )
+        await asyncio.sleep(5)
+    finally:
+        # 8. Usuń kanał
         try:
-            await channel.delete(reason=f"Zakończono rejestrację dla {self.member}")
+            await welcome_channel.delete(reason="Zakończono lub przerwano proces ankiety")
         except discord.Forbidden:
-            print("[BŁĄD] Bot nie ma uprawnień do usuwania kanału.")
-        except Exception as e:
-            print(f"[BŁĄD] Nie udało się usunąć kanału rejestracyjnego: {e}")
+            print("❌ Nie mam uprawnień do usunięcia kanału ankiety.")
 
 
-class VoivodeshipView(discord.ui.View):
-    """Widok z selectem województw."""
-
-    def __init__(self, member: discord.Member):
-        super().__init__(timeout=300)
-        self.add_item(VoivodeshipSelect(member))
-
-
-# === NOWI UŻYTKOWNICY ===
+# ===================== NOWY USER – ON_MEMBER_JOIN =====================
 
 @bot.event
 async def on_member_join(member: discord.Member):
-    """
-    Flow dla NOWEJ osoby:
-    1. Tworzymy prywatny kanał w kategorii Rejestracja
-    2. Ukrywamy inne kanały
-    3. Pytania 1–3
-    4. Nadajemy role
-    5. Odblokowujemy kanały, usuwamy kanał rejestracyjny
-    """
-    print(f"[INFO] Nowy użytkownik: {member} dołączył na {member.guild.name}")
-    await start_registration_for_member(member)
+    print(f"👤 Nowy użytkownik: {member} dołączył na {member.guild.name}")
+    await przeprowadz_ankiete(member, uzyj_roli_startowej=True)
 
 
-# === START BOTA ===
+# ===================== KOMENDA !ankieta =====================
 
-if __name__ == "__main__":
-    bot.run(TOKEN)
+@bot.command(name="ankieta")
+async def ankieta_cmd(ctx: commands.Context):
+    """Pozwala użytkownikowi zmienić swoje główne role (wiek, województwo, płeć)."""
+    if ctx.author.bot:
+        return
+
+    await ctx.send(f"{ctx.author.mention} tworzę dla Ciebie prywatny kanał z ankietą 🔐", delete_after=10)
+
+    # (opcjonalnie) usuń wiadomość z komendą, żeby nie zaśmiecać
+    try:
+        await ctx.message.delete(delay=2)
+    except discord.Forbidden:
+        pass
+
+    await przeprowadz_ankiete(ctx.author, uzyj_roli_startowej=False)
+
+
+# ===================== START BOTA =====================
+
+bot.run(TOKEN)
